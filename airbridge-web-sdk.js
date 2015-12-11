@@ -3,10 +3,10 @@
             888     d8888  d88P  Y88b d88P  Y88b
             888       888  Y88b. d88P 888    888
     8888b.  88888b.   888   "Y88888"  888    888
-        "88b 888 "88b  888  .d8P""Y8b. 888    888
-    .d888888 888  888  888  888    888 888    888
-    888  888 888 d88P  888  Y88b  d88P Y88b  d88P
-    "Y888888 88888P" 8888888 "Y8888P"   "Y8888P"
+       "88b 888 "88b  888  .d8P""Y8b. 888    888
+   .d888888 888  888  888  888    888 888    888
+   888  888 888 d88P  888  Y88b  d88P Y88b  d88P
+   "Y888888 88888P" 8888888 "Y8888P"   "Y8888P"
 
     Date        : 2015-12-11
     Author      : Hunjae Jung
@@ -26,6 +26,292 @@ $airbridge = (function(window) {
     var ab = {};
 
     /* ===============================================
+     *  Initial values
+    =================================================*/
+    var deeplink = null;
+    var installLink = null;
+    var redirect = false;
+    var buttonId = null;
+    var descId = null;
+    var language = 'ko';
+    var appId = 1;
+
+    /* ===============================================
+     *  Global values
+    =================================================*/
+    var completeDeeplink = "";
+    var uninstalled = false;
+    var stats = true;
+    //var coreServer = "https://core.airbridge.io";
+    var coreServer = "http://core.localhost:5000";
+    var resultFunctionality = 0;
+    var transactionId = UUID();
+    var sdkVersion = "AIRBRIDGE_SDK_v1.0";
+    var social = "{{social}}";
+    var clientIP = "{{clientIP}}";
+
+    /* ===============================================
+     *  Check Bogus Features
+    =================================================*/
+    function checkFunctionality() {
+        var result = new Function("{{checkFunctionality}}")();
+        return result;
+    };
+    //resultFunctionality = checkFunctionality();
+    resultFunctionality = 0;
+
+    // ====================================
+    // Set Cookies (udlClientId)
+    // : 사용자 고유 ID로 사용합니다. (최초 발급받은 transactionId가 clientId가 됩니다.)
+    // ====================================
+    var ClientCookie = function(transactionId) {
+        var cookieName = "ab180ClientId";
+
+        this.clientId = getCookie(cookieName);
+        if(this.clientId === undefined){
+            setCookie(cookieName, transactionId, 30);
+            this.clientId = transactionId;
+        }
+
+        function getCookie(c_name)
+        {
+            var i,x,y,ARRcookies=document.cookie.split(";");
+            for (i=0;ARRcookies.length>i;i++)
+            {
+                x=ARRcookies[i].substr(0,ARRcookies[i].indexOf("="));
+                y=ARRcookies[i].substr(ARRcookies[i].indexOf("=")+1);
+                x=x.replace(/^\s+|\s+$/g,"");
+                if (x==c_name) {
+                    return unescape(y);
+                }
+            }
+        }
+
+        function setCookie(c_name, value, expireDays){
+            var expireDate = new Date();
+            expireDate.setDate(expireDate.getDate()+expireDays);
+            var c_value = escape(value) + ((expireDays==null)? "":"; expires="+expireDate.toUTCString());
+            document.cookie = c_name + "=" + c_value;
+        }
+    }
+    var clientCookie = new ClientCookie(transactionId);
+
+    loadEvent();
+
+
+    /* ===============================================
+     *  Initial function
+    =================================================*/
+    ab["init"] = function(obj){
+        // TODO (return if empty)
+        deeplink = obj.deeplink;
+        installLink = obj.installLink;
+        redirect = obj.redirect;
+        transactionId = obj.transactionId;
+        buttonId = obj.buttonId;
+        descId = obj.descId;
+        appId = obj.appId;
+        stats = obj.stats? obj.stats:true;
+        language = obj.language? obj.language:"ko";
+
+        /* ===============================================
+         *  Create completeDeeplink
+        =================================================*/
+        if (deeplink.trim() == "") {
+            completeDeeplink = "";
+        } else {
+            /* ===============================================
+             *  Remove last '/' (to fix Android bug)
+            =================================================*/
+            var path = deeplink.replace("://","");
+            if(path.length != 0 && path[path.length - 1] == "/"){
+                deeplink = deeplink.substring(0, deeplink.length-1);
+            }
+
+            /* ===============================================
+             *  Check protocol and
+             *  Set transcationId and airbridge flag
+            =================================================*/
+            var parser = document.createElement('a');
+            parser.href = deeplink;
+            if (ua.platform == ANDROID && parser.protocol.toLowerCase() == "intent:") {
+                if (deeplink.split("#Intent")[0].indexOf("?") == -1) {
+                    completeDeeplink = deeplink.replace("#Intent", "?transactionId="+transactionId+"&udl=true#Intent")
+                } else {
+                    completeDeeplink = deeplink.replace("#Intent", "&transactionId="+transactionId+"&udl=true#Intent")
+                }
+            } else {
+                if(deeplink.indexOf("?")==-1){
+                    completeDeeplink = deeplink+"?transactionId="+transactionId+"&udl=true";
+                }else{
+                    completeDeeplink = deeplink+"&transactionId="+transactionId+"&udl=true";
+                }
+            }
+        }
+
+        // WILL BE REMOVED (TODO)
+        document.getElementById("uaua").innerText = ua.ua;
+
+        if (window.location.href.indexOf("uninstalled=1") == -1) {
+            /* ===============================================
+             *  Set to Deeplink Button First
+            =================================================*/
+            ab.setDeeplinkButton(buttonId);
+
+            if (redirect == true) {
+                /* ===============================================
+                 *  Try App Launch
+                =================================================*/
+                ab.launchDeeplink(completeDeeplink, installLink);
+            } else {
+                setButtonStatus();
+            }
+        } else {
+            /* ===============================================
+             * Set to Install Button
+            =================================================*/
+            uninstalled = true;
+            setButtonStatus();
+            ab.setDeeplinkButton(buttonId);
+        }
+    };
+
+    /* ===============================================
+     *  Create XMLHttpRequest
+    =================================================*/
+    function sendCreatedRequest(method, url, data, success){
+        if (!stats) return;
+
+        var req = new XMLHttpRequest;
+
+        req.onreadystatechange = function(aEvt) {
+            if(req.readyState == 4){
+                //GET TransactionId
+                switch(req.status){
+                    case 200:
+                        success(req);
+                    break;
+                    case 405:
+                        break;
+                    default:
+                        break;
+                }
+            }
+        };
+        req.ontimeout = function() {
+            //time out error
+        };
+
+        req.open(method, url, true); //true is for Async
+        req.onprogress = function (e){
+            var percentComplete = (e.loaded/e.total)*100;
+        };
+        req.onerror = function (e){
+            console.log("Error " + e.target.status + " occured while receiving the document.");
+        };
+
+        req.setRequestHeader("Content-type","text/plain");
+
+        req.send(data);
+    }
+
+    /* ===============================================
+     *  Send LoadEvent
+    =================================================*/
+    function loadEvent (target){
+        sendCreatedRequest("POST", coreServer+"/stats/", JSON.stringify({
+            transactionId: transactionId,
+            eventCategory: 801,
+            eventType: 1,
+            sdkVersion: sdkVersion,
+            originUrl: window.location.href,
+            checkFunctionality: resultFunctionality,
+            appId: appId,
+            clientId: clientCookie.clientId,
+            clientData: {
+                social: social,
+                userAgent: ua,
+                referer: document.referrer,
+                clientIP: clientIP,
+                resolution: {
+                    width: window.screen.width,
+                    height: window.screen.height
+                }
+            },
+            additionalData: {
+            }
+        }), function(req){
+            // success
+            console.log("LINK/LOAD event is launched!")
+            var result = JSON.parse(req.responseText);
+        });
+    }
+
+    /* ===============================================
+     *  Send RedirectEvent
+    =================================================*/
+    function redirectEvent(target, rawDeeplink, callback){
+        sendCreatedRequest("POST", coreServer+"/stats/", JSON.stringify({
+            transactionId: transactionId,
+            eventCategory: 802,
+            eventType: 1,
+            sdkVersion: sdkVersion,
+            originUrl: window.location.href,
+            checkFunctionality: resultFunctionality,
+            clientId: clientCookie.clientId,
+            clientData: {
+                target: target,
+                rawDeeplink: rawDeeplink,
+                social: social,
+                userAgent: ua,
+                referer: document.referrer,
+                clientIP: clientIP,
+                resolution: {
+                    width: window.screen.width,
+                    height: window.screen.height
+                },
+                deferredKey: {
+                    appId: appId,
+                    screenSize: String(window.screen.width)+"x"+String(window.screen.height),
+                    osVersion: ua.os.name+ua.os.version,
+                    deviceType: !!ua.device.model? ua.device.model: ua.browser.name
+                }
+            },
+            additionalData: {
+            }
+        }), function(req){ // success
+            console.log("REDIRECT event is launched!")
+            callback();
+        });
+
+    }
+
+
+    /* ===============================================
+     *  Set Deeplink Button Event
+    =================================================*/
+    ab["setDeeplinkButton"] = function(id) {
+        if (uninstalled) {
+            /* ===============================================
+             *  App Uninstalled
+            =================================================*/
+            document.getElementById(id).onclick = function() {
+                /* ===============================================
+                 * Set to Launch Button
+                =================================================*/
+                ab.launchStore(completeDeeplink, installLink);
+            }
+        } else {
+            /* ===============================================
+             *  Don't know yet
+            =================================================*/
+            document.getElementById(id).onclick = function() {
+                ab.launchDeeplink(completeDeeplink, installLink);
+            }
+        }
+    };
+
+    /* ===============================================
      *  UA and Cookies
     =================================================*/
     // ua-parser-js (https://github.com/faisalman/ua-parser-js)
@@ -35,8 +321,8 @@ $airbridge = (function(window) {
         return platformFromUserAgent(navigator.userAgent);
     };
 
-    var APPLE_IPHONE = "Apple iPhone";
-    var APPLE_IPAD = "Apple iPad";
+    var APPLE_IPHONE = "iPhone";
+    var APPLE_IPAD = "iPad";
     var IOS = "iOS";
     var ANDROID = "Android";
     var DESKTOP = "Desktop";
@@ -62,7 +348,7 @@ $airbridge = (function(window) {
                 }
                 break;
             default:
-                if (client.ua.indexOf("inapp") != -1)
+                if (client.ua.indexOf("NAVER") != -1)
                     client.platform = IPHONE_NAVER;
                 else
                     client.platform = DESKTOP;
@@ -82,12 +368,31 @@ $airbridge = (function(window) {
     var ua = currentUserAgent();
 
     /* ===============================================
-     *  Check Bogus Features
+     *  Set Cookie
     =================================================*/
-    ab["checkFunctionality"] = function (checkFunctionality) {
-        var result = new Function(checkFunctionality)();
-        return result;
-    };
+    function setCookie(c_name, value, expireDays){
+        var expireDate = new Date();
+        expireDate.setDate(expireDate.getDate()+expireDays);
+        var c_value = escape(value) + ((expireDays==null)? "":"; expires="+expireDate.toUTCString());
+        document.cookie = c_name + "=" + c_value;
+    }
+
+    /* ===============================================
+     *  Get Cookie
+    =================================================*/
+    function getCookie(c_name)
+    {
+        var i,x,y,ARRcookies=document.cookie.split(";");
+        for (i=0;ARRcookies.length>i;i++)
+        {
+            x=ARRcookies[i].substr(0,ARRcookies[i].indexOf("="));
+            y=ARRcookies[i].substr(ARRcookies[i].indexOf("=")+1);
+            x=x.replace(/^\s+|\s+$/g,"");
+            if (x==c_name) {
+                return unescape(y);
+            }
+        }
+    }
 
     /* ===============================================
      *  Disallow Deeplinking
@@ -96,9 +401,9 @@ $airbridge = (function(window) {
         window.addEventListener("pagehide", function() {
             clearTimeout(redirectTimer);
         });
-        window.addEventListener("pageshow", function() {
-            clearTimeout(redirectTimer);
-        });
+        //window.addEventListener("pageshow", function() {
+            //clearTimeout(redirectTimer);
+        //});
         window.addEventListener("blur", function() {
             clearTimeout(redirectTimer);
         });
@@ -113,28 +418,89 @@ $airbridge = (function(window) {
     };
 
     /* ===============================================
+     *  iFrame Deeplink Launch (Old Version)
+    =================================================*/
+    var iFrameLaunch = function(deeplink) {
+        var hiddenIFrame = document.createElement("iframe");
+        hiddenIFrame.style.width = "1px";
+        hiddenIFrame.style.height = "1px";
+        hiddenIFrame.border = "none";
+        hiddenIFrame.style.display = "none";
+        hiddenIFrame.src = deeplink;
+        document.body.appendChild(hiddenIFrame);
+    };
+
+    /* ===============================================
      *  iOS Deeplink Launch
     =================================================*/
     var iOSDeeplinkLaunch = function(deeplink) {
-        var timeoutTime = 2000;
+        /* ===============================================
+         *  FB && iOS9
+        =================================================*/
+        if (ua.ua.indexOf("FB") != -1 && parseFloat(ua.os.version) >= 9.0) {
+            // Facebook In-app browser
+            var currentLocation = "ftp://redirect.airbridge.io/index.html?target="+ window.location.href;
+            if (window.location.href.indexOf("?") != -1) {
+                currentLocation = currentLocation + "&abredirect=1"
+            } else {
+                currentLocation = currentLocation + "?abredirect=1"
+            }
 
-        if(parseFloat(ua.os.version)>=9.0){
-            window.location = deeplink;
-        } else if (ua.platform == NAVER_IPHONE) {
-            window.location = deeplink;
-        } else {
-            var hiddenIFrame = document.createElement("iframe");
-            hiddenIFrame.style.width = "1px";
-            hiddenIFrame.style.height = "1px";
-            hiddenIFrame.border = "none";
-            hiddenIFrame.style.display = "none";
-            hiddenIFrame.src = deeplink;
-            document.body.appendChild(hiddenIFrame);
+            if (window.location.href.indexOf("abredirect") == -1) {
+                window.location = currentLocation;
+                return;
+            }
         }
 
-        clearTimeoutOnPageUnload(setTimeout(function() {
-            setAppUninstalled();
-        }, timeoutTime));
+        var timeoutTime = 2000;
+
+        redirectEvent("iOS", deeplink, function(){
+            if (ua.browser.name.indexOf("Safari") != -1) {
+                if (parseFloat(ua.os.version) >= 9.2) {
+                    // Try mobile deeplink (TODO)
+                    window.location = deeplink;
+                } else if (parseFloat(ua.os.version) >= 9.0) {
+                    /* ===============================================
+                     *  iPhone + Safari + 9.0/9.1
+                     =================================================*/
+                    // Check current location
+                    var currentLocation = window.location.href;
+                    if (currentLocation.indexOf("uninstalled=1") != -1) return;
+
+                    // Try mobile deeplink
+                    window.location = deeplink;
+
+                    // Wait 0.5 sec, if there is no action, Assume that the app isn't installed.
+                    setTimeout(function() {
+                        if(currentLocation.indexOf("?")==-1){
+                            var redirectLink = currentLocation+"?uninstalled=1"
+                        }else{
+                            var redirectLink = currentLocation+"&uninstalled=1"
+                        }
+                        window.location = redirectLink;
+                    }, 500);
+                } else {
+                    iFrameLaunch(deeplink);
+                }
+            } else {
+                if (ua.os.version >= 9.0) {
+                    window.location = deeplink;
+                } else {
+                    iFrameLaunch(deeplink);
+                }
+            }
+
+            clearTimeoutOnPageUnload(setTimeout(function() {
+                if (redirect == false || uninstalled == true) {
+                    /* ===============================================
+                     *  Button Clicked
+                     =================================================*/
+                    ab.launchStore(deeplink, installLink);
+                }
+                uninstalled = true;
+                setButtonStatus();
+            }, timeoutTime));
+        });
     };
 
     /* ===============================================
@@ -154,14 +520,14 @@ $airbridge = (function(window) {
         }
 
         if (navigator.userAgent.match(/FBAV/)) {
-            events.redirectEvent("Android", deeplink, function(){
+            redirectEvent("Android", deeplink, function(){
                 window.location.replace(deeplink);
 
                 var visitedAt = (new Date()).getTime(); // 방문 시간
                 setTimeout(
                     function () {
                         if (timeoutTime > (new Date()).getTime() - visitedAt) {
-                            setAppUninstalled();
+                            setButtonStatus();
                         }
                     }, 500);
             });
@@ -169,7 +535,7 @@ $airbridge = (function(window) {
 
         if (parser.protocol == "intent:") {
             // intent면 걍 던지면 됨 (미설치시 알아서 마켓으로 보내줌 + 크롬이든 기본 브라우져든 상관 없음)
-            events.redirectEvent("Android_Intent", deeplink, function(){
+            redirectEvent("Android_Intent", deeplink, function(){
                 document.location = deeplink;
             });
         } else {
@@ -184,7 +550,7 @@ $airbridge = (function(window) {
                 var intentUrl = "intent://" + parser.pathname.replace(/\/\//g, '') + parser.search + "/#Intent;scheme=" + parser.protocol.replace(':', '') + ";package=" + marketParser.search.replace("?id=", "") + ";end";
 
                 // 기본 브라우져에서 됨 (크롬안됨)
-                events.redirectEvent("Android_Intent", deeplink, function(){
+                redirectEvent("Android_Intent", deeplink, function(){
                     window.top.location.href = intentUrl;
                 });
             } else {
@@ -194,14 +560,14 @@ $airbridge = (function(window) {
                 var iframe = document.createElement('iframe');
                 iframe.style.visibility = 'hidden';
                 iframe.src = deeplink;
-                events.redirectEvent("Android", deeplink, function(){
+                redirectEvent("Android", deeplink, function(){
                     document.body.appendChild(iframe);
                     document.body.removeChild(iframe); // back 호출시 캐싱될 수 있으므로 제거
 
                     setTimeout(
                         function () {
                             if (timeoutTime > (new Date()).getTime() - visitedAt) {
-                                setAppUninstalled();
+                                setButtonStatus();
                             }
                         }, 500);
                 });
@@ -216,11 +582,81 @@ $airbridge = (function(window) {
         window.open(deeplink);
     }
 
+    /* ===============================================
+     *  Set App Uninstalled
+    =================================================*/
+    function setButtonStatus() {
+        var buttonTitle = ""
+
+        if (ua.platform == DESKTOP) {
+            if (completeDeeplink.trim() == "") {
+                /* ===============================================
+                 *  갈 곳이 없어요.
+                 =================================================*/
+                if (language == 'en') {
+                    buttonTitle = "This app doesn't support desktop users."
+                } else {
+                    buttonTitle = "데스크탑 사용자를 지원하지 않습니다.";
+                }
+            } else {
+                /* ===============================================
+                 *  deeplink로 가면 되요!
+                 =================================================*/
+                if (language == 'en') {
+                    buttonTitle = 'Directly launch on Mobile Phone.';
+                } else {
+                    buttonTitle = '모바일에서 실행하면 바로 이동합니다.';
+                }
+            }
+        } else {
+            // check english version or not
+            if (completeDeeplink.trim() == "") {
+                /* ===============================================
+                 *  갈 곳이 없어요.
+                 =================================================*/
+                if (language == 'en') {
+                    buttonTitle = "This app doesn't support " + ua.platform + " users.";
+                } else {
+                    buttonTitle = ua.platform + " 앱을 지원하지 않습니다.";
+                }
+            } else {
+                /* ===============================================
+                 *  completeDeeplink로 가면 되요!
+                 =================================================*/
+                if (uninstalled) {
+                    if (language == 'en') {
+                        if (installLink.trim() != "") {
+                            buttonTitle = 'Launch after install';
+                        } else {
+                            buttonTitle = 'Mobile web site.';
+                        }
+                    } else {
+                        if (installLink.trim() != "") {
+                            buttonTitle = '앱 설치 후 바로보기';
+                        } else {
+                            buttonTitle = '모바일 웹사이트 이동'
+                        }
+                    }
+                } else {
+                    if (language == 'en') {
+                        buttonTitle = 'Launch this app page';
+                    } else {
+                        buttonTitle = '앱에서 바로보기';
+                    }
+                }
+            }
+        }
+
+        document.getElementById(descId).innerHTML = buttonTitle;
+    }
+
 
     /* ===============================================
      *  Launch Deeplink
     =================================================*/
     ab["launchDeeplink"] = function(deeplink, installLink) {
+        if (deeplink.trim() == "") return;
+
         switch(ua.platform){
             case ANDROID:
                 androidDeeplinkLaunch(deeplink, installLink);
@@ -232,6 +668,7 @@ $airbridge = (function(window) {
                 iOSDeeplinkLaunch(deeplink);
                 break;
             default:
+                webDeeplinkLaunch(deeplink);
                 break;
         }
     }
@@ -245,19 +682,48 @@ $airbridge = (function(window) {
         } else {
             switch(ua.platform){
                 case ANDROID:
-                    window.location.replace(installLink);
-                    break;
+                    redirectEvent("Android_Install", deeplink, function(){
+                        window.location.replace(installLink);
+                    });
                 case APPLE_IPAD:
                 case APPLE_IPHONE:
                 case IPHONE_NAVER:
                 case IPHONE_FB:
-                    window.location.replace(installLink);
+                    redirectEvent("iOS_Install", deeplink, function(){
+                        window.location.replace(installLink);
+                    });
                     break;
                 default:
                     break;
             }
         }
     }
+
+    // ==============================================================
+    // Set Default Transaction ID
+    // uuid-v4.js :: Random UUID (v4) Generator - Usage: UUID()
+    // Copyright (c) 2011 Matt Williams <matt@makeable.co.uk>. All rights reserved.
+    // ==============================================================
+    function UUID() {
+        var dec2hex = [];
+        for (var i=0; i<=15; i++) {
+            dec2hex[i] = i.toString(16);
+        }
+
+        var uuid = '';
+        for (var i=1; i<=36; i++) {
+        if (i===9 || i===14 || i===19 || i===24) {
+            uuid += '-';
+        } else if (i===15) {
+            uuid += 4;
+        } else if (i===20) {
+            uuid += dec2hex[(Math.random()*4|0 + 8)];
+        } else {
+            uuid += dec2hex[(Math.random()*15|0)];
+        }
+        }
+        return uuid;
+    };
 
     return ab;
 })(window)

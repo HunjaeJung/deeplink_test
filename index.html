@@ -4,17 +4,33 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width">
     <title>title</title>
-    <script src="./airbridge-web-sdk.js"> </script>
+    <script src="./airbridge-web-sdk.js"></script>
   </head>
   <body>
     쏘카 예제 입니다.
+    <div id="airbridge-btn">
+      <p>hello this is button</p>
+      <div id="airbridge-btn-desc"></div>
+    </div>
     <br/>
+    <div id="uaua"></div>
     <script async src="//core.airbridge.io/sdk/cards?app=socar&tpl=zoneinfo"
                   data-ios-params-trackId="lid"
                   data-android-params-Id="lid"
                   data-web-params-Id="lid"
                   data-redirect="false"
                   data-title="쏘카앱으로 이동합니다.">
+    </script>
+    <script>
+      $airbridge.init({
+          deeplink: "bpc://",
+          installLink: "itms-apps://itunes.apple.com/app/beat-biteu-mulyo-ladio-sosyeol/id853073541?mt=8",
+          redirect: false, //앱이 깔려있는 경우 무조건 redirect. 그 외의 경우 무조건 대기(버튼으로 액션).
+          buttonId: "airbridge-btn",
+          descId: "airbridge-btn-desc",
+          appId: "3",
+          bridgeLink: "http://beat.airbridge.io/SPAKEM"
+      });
     </script>
 
   </body>
